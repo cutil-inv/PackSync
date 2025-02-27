@@ -7,7 +7,10 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
+	"path"
 	"path/filepath"
+	"strings"
 
 	core "PackSync.core"
 )
@@ -25,7 +28,7 @@ const (
 	PURGE_PATH = "content\\"
 )
 
-func CheckUpdateAvailable(repo string) (update bool, version string, release Release) {
+func CheckUpdateAvailable(repo string, local string) (update bool, version string, release Release) {
 	fmt.Println("Checking latest version...")
 
 	resp, err := http.Get("https://api.github.com/repos/" + repo + "/releases/latest")
@@ -50,7 +53,7 @@ func CheckUpdateAvailable(repo string) (update bool, version string, release Rel
 	latestVersion := release.TagName
 	currentVersion := "0.0.0"
 
-	versionFile, err := os.ReadFile(core.GetAppDataDir(DATA_PATH) + ".version")
+	versionFile, err := os.ReadFile(core.GetAppDataDir(DATA_PATH) + ".v" + local)
 	if err == nil {
 		currentVersion = string(versionFile)
 	}
@@ -81,14 +84,14 @@ func RetrieveLatestVersion(release Release, version string) {
 		}
 
 		fmt.Println("Package downloaded for version:", version)
-		os.WriteFile(core.GetAppDataDir(DATA_PATH)+".version", []byte(version), 0644)
+		os.WriteFile(core.GetAppDataDir(DATA_PATH)+".v", []byte(version), 0644)
 	} else {
 		fmt.Println("No assets found for the latest release.")
 	}
 }
 
 func InstallPack(force bool) {
-	update, version, release := CheckUpdateAvailable("cutil-inv/gopher-lua")
+	update, version, release := CheckUpdateAvailable("cutil-inv/gopher-lua", "")
 	dataPath := core.GetAppDataDir(DATA_PATH)
 
 	if force {
@@ -125,21 +128,38 @@ func InstallPack(force bool) {
 	os.RemoveAll(core.GetAppDataDir(DATA_PATH) + "temp\\")
 }
 
-func UpdateSelf() {
-	update, version, release := CheckUpdateAvailable("cutil-inv/PackSync")
+func UpdateSelf(force bool) {
+	update, version, release := CheckUpdateAvailable("cutil-inv/PackSync", "l")
 	dataPath := core.GetAppDataDir(DATA_PATH)
 
-	if !update {
+	if force {
+		fmt.Println("Forcing update...")
+	} else if !update {
 		fmt.Println("You are using the latest version:", version)
 		return
+	} else {
+		fmt.Println("A newer version is available:", version)
 	}
 
 	RetrieveLatestVersion(release, version)
 
 	newFile := dataPath + "temp\\" + filepath.Base(release.Assets[0].BrowserDownloadURL)
-	core.CopyFiles(newFile, os.Args[0])
+	if err := core.CopyFiles(newFile, path.Dir(os.Args[0])+"\\PackSyncUpdater.exe"); err != nil {
+		fmt.Println("Error copying new file:", err)
+		return
+	}
 
 	os.RemoveAll(core.GetAppDataDir(DATA_PATH) + "temp\\")
+	os.WriteFile(core.GetAppDataDir(DATA_PATH)+".vl", []byte(version), 0644)
+
+	cmd := exec.Command(path.Dir(os.Args[0])+"\\PackSyncUpdater.exe", "ensure-self")
+	err := cmd.Start()
+	if err != nil {
+		fmt.Println("Error starting new process:", err)
+		return
+	}
+
+	os.Exit(0)
 }
 
 func main() {
@@ -148,9 +168,16 @@ func main() {
 
 	flag.Parse()
 
+	if strings.HasSuffix(os.Args[0], "PackSyncUpdater.exe") {
+		core.CopyFiles(os.Args[0], path.Dir(os.Args[0])+"\\PackSync.exe")
+		return
+	} else {
+		os.Remove(path.Dir(os.Args[0]) + "\\PackSyncUpdater.exe")
+	}
+
 	switch flag.Arg(0) {
 	case "self-update":
-		UpdateSelf()
+		UpdateSelf(*force || *f)
 	default:
 		InstallPack(*force || *f)
 	}
